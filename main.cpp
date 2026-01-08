@@ -17,6 +17,7 @@ const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
 const std::vector<const char*> validationLayers = { "VK_LAYER_KHRONOS_validation" };
+const std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
 #ifdef NDEBUG
     const bool enableValidationLayers = false;
@@ -59,6 +60,13 @@ struct QueueFamilyIndices
     }
 };
 
+struct SwapChainSupportDetails
+{
+	VkSurfaceCapabilitiesKHR capabilities;       // 스왑체인 할 이미지의 최대/최소 개수, 이미지의 최대/최소 너비 & 높이 값
+	std::vector<VkSurfaceFormatKHR> formats;     // 픽셀 형식, 색 공간 등
+	std::vector<VkPresentModeKHR> presentModes;  // 이미지 표시 방법
+};
+
 class HelloTriangleApplication {
 public:
     void run()
@@ -81,6 +89,54 @@ private:
     // 디바이스 큐는 디바이스가 소멸하면 자동이로 함께 소멸되어 따로 cleanup 처리 해줄 필요는 없음~
     VkQueue graphicsQueue;
     VkQueue presentQueue;
+
+    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device)
+    {
+        SwapChainSupportDetails details;
+
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+        uint32_t formatCount;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+        if (formatCount != 0)
+        {
+            details.formats.resize(formatCount);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+        }
+
+        uint32_t presentModeCount;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+        
+        if (presentModeCount != 0)
+        {
+            details.presentModes.resize(presentModeCount);
+        }
+
+        return details;
+    }
+
+    // 최적의 스왑 체인을 생성하기 위해 적절한 세팅 값들을 골라줘야 한다.
+    // Surface Format (color depth)
+    // Presentation Mode (conditions for "swapping" images to the screen) 
+	// Swap Extent (resolution of images in swap chain)
+    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
+    {
+        for (const auto& availableFormat : availableFormats)
+        {
+            if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            {
+				return availableFormat;
+            }
+        }
+
+		return availableFormats[0];
+    }
+
+    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes)
+    {
+		return VK_PRESENT_MODE_FIFO_KHR;
+    }
 
     void initWindow()
     {
@@ -123,8 +179,6 @@ private:
         glfwDestroyWindow(window);
         glfwTerminate();
     }
-
-
 
     void createInstance()
     {
@@ -261,7 +315,6 @@ private:
             indices.presentFamily.value()
         };
 
-
         // vulkan은 커맨드 버퍼를 스케줄링하기 위해 큐에 0에서 1사이의 값으로 우선순위를 지정할 수 있도록 한다.
         // 이 우선순위 값은 큐가 1개 일 때도 지정해야한다.
         float queuePriority = 1.0f;
@@ -286,7 +339,8 @@ private:
 
         createInfo.pEnabledFeatures = &deviceFeatures;
 
-        createInfo.enabledExtensionCount = 0;
+        createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
         if (enableValidationLayers)
         {
@@ -323,7 +377,35 @@ private:
 
         QueueFamilyIndices indices = findQueueFamilies(device);
 
-        return indices.isComplete();
+        bool extensionSupported = checkDeviceExtensionSupport(device);
+
+        bool swapChainAdequate = false;
+
+        if (extensionSupported) // extension support를 확인 한 후에 스왑체인 supprot 체크하는 것은 중요하다.
+        {
+            SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+            swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+        }
+
+        return indices.isComplete() && extensionSupported && swapChainAdequate;
+    }
+
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device)
+    {
+        uint32_t extensionCount;
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+        std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+        std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+
+        for (const auto& extension : availableExtensions)
+        {
+            requiredExtensions.erase(extension.extensionName);
+        }
+
+        return requiredExtensions.empty();
     }
 
     struct QueueFamilyIndices
