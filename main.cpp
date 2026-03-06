@@ -12,6 +12,9 @@
 #include <optional>
 #include <cstring>
 #include <set>
+#include <cstdint> // necessary for uint32_t
+#include <limits> // necessary for std::numeric_limits
+#include <algorithm> // necessary for std::clamp
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -89,6 +92,10 @@ private:
     // 디바이스 큐는 디바이스가 소멸하면 자동이로 함께 소멸되어 따로 cleanup 처리 해줄 필요는 없음~
     VkQueue graphicsQueue;
     VkQueue presentQueue;
+    VkSwapchainKHR swapChain;
+	std::vector<VkImage> swapChainImages;
+	VkFormat swapChainImageFormat; 
+	VkExtent2D swapChainExtent;
 
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device)
     {
@@ -135,7 +142,35 @@ private:
 
     VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes)
     {
+        for (const auto& availablePresentMode : availablePresentModes)
+        {
+            if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+            {
+                return availablePresentMode;
+            }
+        }
 		return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+        if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) 
+        {
+            return capabilities.currentExtent;
+        }
+        else {
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+
+            VkExtent2D actualExtent = {
+                static_cast<uint32_t>(width),
+                static_cast<uint32_t>(height)
+            };
+
+            actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+            actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+
+            return actualExtent;
+        }
     }
 
     void initWindow()
@@ -158,6 +193,76 @@ private:
         createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
+        createSwapChain();
+    }
+
+    void createSwapChain()
+    {
+        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+		VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+        VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+        VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+		// 이미지 개수는 최소 +1 개로 설정하는 것이 일반적이다.
+        // 다른 이미지를 렌더하도록 요구할 수 있음에도 그저 드라이버가 내부 작업을 완료하기를 기다릴 수 밖에 없는 상황을 방지하기 위해서이다.
+        uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+
+		// 스왑 체인 이미지가 최대 개수를 넘기지 않도록 해야함. 0은 최대 이미지 개수에 제한이 없음을 의미한다.
+        if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
+        {
+            imageCount = swapChainSupport.capabilities.maxImageCount;
+        }
+
+        VkSwapchainCreateInfoKHR createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = surface;
+		createInfo.minImageCount = imageCount;
+        createInfo.imageFormat = surfaceFormat.format;
+		createInfo.imageColorSpace = surfaceFormat.colorSpace;
+		createInfo.imageArrayLayers = 1; // 일반적인 2D 렌더링에서는 1로 설정 (각각의 이미지를 이루는 레이어의 수를 의미)
+		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+        uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+
+        if (indices.graphicsFamily != indices.presentFamily)
+        {
+			// 이 옵션은 성능이 약간 떨어질 수 있지만, 여러 패밀리에서 이미지를 사용할 수 있도록 해준다.
+            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+			createInfo.pQueueFamilyIndices = queueFamilyIndices;
+        }
+        else
+        {
+            // 이미지가 하나의 큐 패밀리에서만 사용될 것이므로 가장 효율적인 옵션이다. 다른 패밀리에서 이미지를 사용할 일이 없다면 이 옵션이 가장 좋다.
+			createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            createInfo.queueFamilyIndexCount = 0; // optional
+			createInfo.pQueueFamilyIndices = nullptr; // optional
+        }
+
+        // 스왑 체인 이미지에 (capabilites가 supportedTransfroms 인 경우)특정 트랜스폼을 적용할 수 있다.
+		// 별도의 트랜스폼을 지정하고 싶지 않다면 currentTransform 값을 그대로 사용하면 된다.
+        createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+
+        // 알파 채널을 통해 다른 윈도우와 어떻게 섞일지 결정하는 필드
+		createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; // 알파 채널 무시하는 옵션
+
+        createInfo.presentMode = presentMode;
+		createInfo.clipped = VK_TRUE; // obscured된 픽셀은 렌더링하지 않도록 하는 옵션 (예: 다른 윈도우에 가려진 부분)
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUBOPTIMAL_KHR)
+        {
+			throw std::runtime_error("failed to create swap chain!");
+        }
+
+        vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+		swapChainImages.resize(imageCount);
+		vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+
+		swapChainImageFormat = surfaceFormat.format;
+		swapChainExtent = extent;
     }
 
     void mainLoop()
@@ -169,6 +274,7 @@ private:
     }
 
     void cleanup() {
+        vkDestroySwapchainKHR(device, swapChain, nullptr);
         vkDestroyDevice(device, nullptr);
 
         if (enableValidationLayers) {
