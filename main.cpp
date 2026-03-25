@@ -1,6 +1,6 @@
 #define GLFW_INCLUDE_VULKAN
-#define VK_USE_PLATFORM_WIN32_KHR
-#define GLFW_EXPOSE_NATIVE_WIN32
+//#define VK_USE_PLATFORM_WIN32_KHR
+//#define GLFW_EXPOSE_NATIVE_WIN32
 
 #include<GLFW/glfw3.h>
 #include<GLFW/glfw3native.h>
@@ -15,12 +15,26 @@
 #include <cstdint> // necessary for uint32_t
 #include <limits> // necessary for std::numeric_limits
 #include <algorithm> // necessary for std::clamp
+//#define GLFW_INCLUDE_VULKAN
+//#include <GLFW/glfw3.h>
+//
+//#include <iostream>
+//#include <stdexcept>
+//#include <algorithm>
+//#include <vector>
+//#include <cstring>
+//#include <cstdlib>
+//#include <cstdint>
+//#include <limits>
+//#include <optional>
+//#include <set>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
 const std::vector<const char*> validationLayers = { "VK_LAYER_KHRONOS_validation" };
 const std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+std::vector<VkImageView> swapChainImageViews;
 
 #ifdef NDEBUG
     const bool enableValidationLayers = false;
@@ -152,9 +166,9 @@ private:
 		return VK_PRESENT_MODE_FIFO_KHR;
     }
 
+
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
-        if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) 
-        {
+        if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
             return capabilities.currentExtent;
         }
         else {
@@ -194,6 +208,37 @@ private:
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapChain();
+        createImageViews();
+    }
+
+    void createImageViews()
+    {
+        swapChainImageViews.resize(swapChainImages.size());
+
+        for (size_t i = 0; i < swapChainImages.size(); i++)
+        {
+			VkImageViewCreateInfo createInfo{};
+			createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			createInfo.image = swapChainImages[i];
+			createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.format = swapChainImageFormat;
+
+			createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+			createInfo.subresourceRange.baseArrayLayer = 0;
+			createInfo.subresourceRange.layerCount = 1;
+
+            if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i])!= VK_SUCCESS)
+            {
+                throw std::runtime_error("failed to create image views");
+            }
+        }
     }
 
     void createSwapChain()
@@ -274,6 +319,11 @@ private:
     }
 
     void cleanup() {
+        for (auto imageView : swapChainImageViews)
+        {
+            vkDestroyImageView(device, imageView, nullptr);
+        }
+
         vkDestroySwapchainKHR(device, swapChain, nullptr);
         vkDestroyDevice(device, nullptr);
 
@@ -514,15 +564,6 @@ private:
         return requiredExtensions.empty();
     }
 
-    struct QueueFamilyIndices
-    {
-        std::optional<uint32_t> graphicsFamily;
-        std::optional<uint32_t> presentFamily;
-
-        bool isComplete() {
-            return graphicsFamily.has_value();
-        }
-    };
 
     //이 함수를 작성함으로써 isDeviceSuitable 함수에서 해당 디바이스가 사용하고자 하는 커맨드를 처리할 수 있는 지 체크할 수 있다.
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
